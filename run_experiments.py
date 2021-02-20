@@ -46,6 +46,7 @@ tf.compat.v1.flags.DEFINE_boolean('notebook', False, '')
 tf.compat.v1.flags.DEFINE_integer('num_steps', 1, 'number of training step per new batch in online learning.')
 tf.compat.v1.flags.DEFINE_integer('n_batch_to_retrain', 1, 'number of old batch to retrain in online learning.')
 tf.compat.v1.flags.DEFINE_integer('batch_size', 256, '')
+tf.compat.v1.flags.DEFINE_string('run', '8,9,10,11', '')
 FLAGS = tf.compat.v1.flags.FLAGS
 
 
@@ -759,8 +760,12 @@ if __name__ == '__main__':
     # run_experiment_6()
     # run_experiment_7()
 
-    run_experiment_8()
-    run_experiment_9()
-    run_experiment_10()
-    run_experiment_11()
-    # run_experiment_12()
+    if FLAGS.run:
+        for exp_id in FLAGS.run.split(','):
+            eval('run_experiment_' + exp_id)()
+    else:  # manual call
+        run_experiment_8()
+        run_experiment_9()
+        run_experiment_10()
+        run_experiment_11()
+        # run_experiment_12()
