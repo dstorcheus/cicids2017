@@ -24,7 +24,7 @@ from tqdm import tqdm_notebook
 
 from incremental_trees.models.classification.streaming_rfc import StreamingRFC
 
-
+import time
 import tensorflow as tf
 import sys
 import matplotlib.pyplot as plt  # plotting
@@ -378,7 +378,9 @@ def train_rf_online(train_X, train_y,
         rfe[0] = srfc.partial_fit(x, y, classes=[0, 1])
 
     auc = eval_auc(train_y, pred)
+    acc = eval_acc(train_y, pred)
     print("RF AUC: {}".format(auc))
+    print("RF ACC: {}".format(acc))
 
 
 def train_rf(train_X, train_y, test_X, test_y):
@@ -443,7 +445,10 @@ def train_lgr_online(train_X, train_y, batch_size=256,
         LGR_Classifier.partial_fit(x, y, classes=[0, 1])
 
     auc = eval_auc(train_y, pred)
+    acc = eval_acc(train_y, pred)
+
     print("LGR AUC: {}".format(auc))
+    print("LGR ACC: {}".format(acc))
 
 
 def train_lgr(train_X, train_y, test_X, test_y):
@@ -483,7 +488,9 @@ def train_bnb_online(train_X, train_y, batch_size=256,
         BNB_Classifier.partial_fit(x, y, classes=[0, 1])
 
     auc = eval_auc(train_y, pred)
-    print("RF AUC: {}".format(auc))
+    acc = eval_acc(train_y, pred)
+    print("BNB AUC: {}".format(auc))
+    print("BNB ACC: {}".format(acc))
 
 
 def train_bnb(train_X, train_y, test_X, test_y):
@@ -529,7 +536,9 @@ def train_dtc_online(train_X, train_y,
         rfe[0] = srfc.partial_fit(x, y, classes=[0, 1])
 
     auc = eval_auc(train_y, pred)
-    print("RF AUC: {}".format(auc))
+    acc = eval_acc(train_y, pred)
+    print("DTC AUC: {}".format(auc))
+    print("DTC ACC: {}".format(acc))
 
 
 def train_dtc(train_X, train_y, test_X, test_y):
@@ -759,6 +768,8 @@ if __name__ == '__main__':
     # run_experiment_5()
     # run_experiment_6()
     # run_experiment_7()
+
+    print('Run at time stamp', time.time())
 
     if FLAGS.run:
         for exp_id in FLAGS.run.split(','):
