@@ -16,6 +16,10 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
 import sklearn
 import tqdm
+
+from tqdm import tqdm
+from tqdm import tqdm_notebook
+
 #import xgboost as xgb
 
 from incremental_trees.models.classification.streaming_rfc import StreamingRFC
@@ -35,7 +39,17 @@ pd.set_option('display.max_rows', None)
 nRowsRead = None
 
 # Some hardcoded parameters:
-sampled_instances_ = 10000
+
+
+tf.compat.v1.flags.DEFINE_integer('sample', 10000, '')
+tf.compat.v1.flags.DEFINE_boolean('notebook', False, '')
+tf.compat.v1.flags.DEFINE_integer('num_steps', 1, 'number of training step per new batch in online learning.')
+tf.compat.v1.flags.DEFINE_integer('n_batch_to_retrain', 1, 'number of old batch to retrain in online learning.')
+tf.compat.v1.flags.DEFINE_integer('batch_size', 256, '')
+FLAGS = tf.compat.v1.flags.FLAGS
+
+
+progress_bar = tqdm
 
 
 def load_data(sampled_instances=10000):
@@ -71,7 +85,8 @@ def load_data(sampled_instances=10000):
     # Some columns have inf values.
     df = df.replace([np.inf, -np.inf], np.nan).dropna()
     df.head()
-    if sampled_instances is not None and sampled_instances < nRow:
+
+    if sampled_instances > 0 and sampled_instances < nRow:
         df = df.sample(n=sampled_instances)
 
     return df
@@ -268,6 +283,7 @@ def eval_auc(true_y, pred):
 
 
 def eval_acc(true_y, pred):
+    pred = (np.array(pred) >= 0.5).astype(np.float64)
     return np.sum(np.equal(true_y, pred)) * 1.0 / len(pred)
 
 
@@ -357,7 +373,7 @@ def train_rf_online(train_X, train_y,
             batch_size, n_batch_to_retrain, num_steps,
             yield_minibatch=False)
 
-    for x, y in tqdm.tqdm(datagen, total=total_steps):
+    for x, y in progress_bar(datagen, total=total_steps):
         rfe[0] = srfc.partial_fit(x, y, classes=[0, 1])
 
     auc = eval_auc(train_y, pred)
@@ -401,6 +417,34 @@ def train_knn(train_X, train_y, test_X, test_y):
     print("KNN AUC: {}".format(auc))
 
 
+def train_lgr_online(train_X, train_y, batch_size=256, 
+                     n_batch_to_retrain=1, num_steps=1):
+    """Trains logistic regression model."""
+    LGR_Classifier = LogisticRegression(n_jobs=-1, random_state=0)
+
+    total_steps = train_X.shape[0] // batch_size
+    total_steps *= num_steps
+    print('Total {} steps'.format(total_steps))
+
+    def predict_fn(x):
+        try:
+            return LGR_Classifier.predict_proba(x)[:, 1]
+        except sklearn.exceptions.NotFittedError:
+            return [0.5] * x.shape[0]
+
+    pred = []
+    datagen = online_data_gen_with_retrain(
+            predict_fn, pred, train_X, train_y,
+            batch_size, n_batch_to_retrain, num_steps,
+            yield_minibatch=False)
+
+    for x, y in progress_bar(datagen, total=total_steps):
+        LGR_Classifier.partial_fit(x, y, classes=[0, 1])
+
+    auc = eval_auc(train_y, pred)
+    print("LGR AUC: {}".format(auc))
+
+
 def train_lgr(train_X, train_y, test_X, test_y):
     """Trains logistic regression model."""
     LGR_Classifier = LogisticRegression(n_jobs=-1, random_state=0)
@@ -434,7 +478,7 @@ def train_bnb_online(train_X, train_y, batch_size=256,
             batch_size, n_batch_to_retrain, num_steps,
             yield_minibatch=False)
 
-    for x, y in tqdm.tqdm(datagen, total=total_steps):
+    for x, y in progress_bar(datagen, total=total_steps):
         BNB_Classifier.partial_fit(x, y, classes=[0, 1])
 
     auc = eval_auc(train_y, pred)
@@ -480,7 +524,7 @@ def train_dtc_online(train_X, train_y,
             batch_size, n_batch_to_retrain, num_steps,
             yield_minibatch=False)
 
-    for x, y in tqdm.tqdm(datagen, total=total_steps):
+    for x, y in progress_bar(datagen, total=total_steps):
         rfe[0] = srfc.partial_fit(x, y, classes=[0, 1])
 
     auc = eval_auc(train_y, pred)
@@ -630,57 +674,87 @@ def run_experiment_7():
 def run_experiment_8():
     """DNN online, with and without feature selection."""
     print("Train DNN online.")
-    df = load_data(sampled_instances=10000)
+    df = load_data(FLAGS.sample)
     train_X, train_y = preprocess_data_online(df)
     
     print("DNN without feature selection.")
-    train_dnn_online(train_X, train_y)
+    train_dnn_online(
+            train_X, train_y, 
+            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
         
     print("DNN with feature selection.")
     train_X, train_y = select_features(train_X, train_y)
-    train_dnn_online(train_X, train_y)
+    train_dnn_online(
+            train_X, train_y, 
+            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
     
 
 def run_experiment_9():
     """Runs rf with and without feature selection."""
     print("Train RF online.")
-    df = load_data()
+    df = load_data(FLAGS.sample)
     train_X, train_y = preprocess_data_online(df)
     print("RF without feature selection.")
-    train_rf_online(train_X, train_y)
+    train_rf_online(
+            train_X, train_y, 
+            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
     train_X, train_y = select_features(
         train_X, train_y)
     print("RF with feature selection.")
-    train_rf_online(train_X, train_y)
+    train_rf_online(
+            train_X, train_y, 
+            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
 
 
 def run_experiment_10():
     """Runs BNB with and without feature selection."""
     print("Train BNB online.")
-    df = load_data()
+    df = load_data(FLAGS.sample)
     train_X, train_y = preprocess_data_online(df)
-    print("RF without feature selection.")
-    train_bnb_online(train_X, train_y)
+    print("BNB without feature selection.")
+    train_bnb_online(
+            train_X, train_y, 
+            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
     train_X, train_y = select_features(train_X, train_y)
-    print("RF with feature selection.")
-    train_bnb_online(train_X, train_y)
+    print("BNB with feature selection.")
+    train_bnb_online(
+            train_X, train_y, 
+            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
 
 
 def run_experiment_11():
     """Runs DTC with and without feature selection."""
     print("Train DTC online.")
-    df = load_data()
+    df = load_data(FLAGS.sample)
     train_X, train_y = preprocess_data_online(df)
-    print("RF without feature selection.")
-    train_dtc_online(train_X, train_y)
+    print("DTC without feature selection.")
+    train_dtc_online(
+            train_X, train_y, 
+            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
     train_X, train_y = select_features(
             train_X, train_y)
-    print("RF with feature selection.")
-    train_dtc_online(train_X, train_y)
+    print("DTC with feature selection.")
+    train_dtc_online(
+            train_X, train_y, 
+            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
+
+
+# def run_experiment_12():
+#     """Runs LGR with and without feature selection."""
+#     print("Train LGR online.")
+#     df = load_data()
+#     train_X, train_y = preprocess_data_online(df)
+#     print("LGR without feature selection.")
+#     train_lgr_online(train_X, train_y)
+#     train_X, train_y = select_features(train_X, train_y)
+#     print("LGR with feature selection.")
+#     train_lgr_online(train_X, train_y)
 
 
 
 if __name__ == '__main__':
+    if not FLAGS.notebook:
+        progress_bar = tqdm_notebook
     # run_experiment_5()
     # run_experiment_6()
     # run_experiment_7()
@@ -689,3 +763,4 @@ if __name__ == '__main__':
     run_experiment_9()
     run_experiment_10()
     run_experiment_11()
+    # run_experiment_12()
