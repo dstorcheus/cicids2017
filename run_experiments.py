@@ -53,8 +53,25 @@ FLAGS = tf.compat.v1.flags.FLAGS
 progress_bar = tqdm
 
 
+df_cache = None
+
+
+# A little hack
+# print_sys = print
+
+# def print(s):
+#     print_sys(s)
+#     with open('log.txt', 'a') as f:
+#         f.write(s + '\n')
+
+
 def load_data(sampled_instances=10000):
     """Returns sampled cicids data as pd.df."""
+
+    global df_cache
+    if df_cache is not None:
+        return df_cache
+
     df1 = pd.read_csv("Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv")
     df2 = pd.read_csv("Friday-WorkingHours-Afternoon-PortScan.pcap_ISCX.csv")
     df3 = pd.read_csv("Friday-WorkingHours-Morning.pcap_ISCX.csv")
@@ -90,6 +107,7 @@ def load_data(sampled_instances=10000):
     if sampled_instances > 0 and sampled_instances < nRow:
         df = df.sample(n=sampled_instances)
 
+    df_cache = df
     return df
 
 
@@ -502,7 +520,9 @@ def train_bnb(train_X, train_y, test_X, test_y):
     for x in pred:
         pred_.append(x[1])
     auc = eval_auc(test_y, pred_)
+    acc = eval_acc(test_y, pred_)
     print("BNB AUC: {}".format(auc))
+    print("BNB ACC: {}".format(acc))
 
 
 def train_dtc_online(train_X, train_y,
@@ -583,7 +603,7 @@ def select_features(train_X, train_y, test_X=None, test_y=None, k=20):
     a = [i[0] for i in feature_map]
     train_X = train_X.iloc[:, a]
 
-    if test_X:
+    if test_X is not None:
         test_X = test_X.iloc[:, a]
         return train_X, train_y, test_X, test_y
 
@@ -691,7 +711,6 @@ def run_experiment_8():
     train_dnn_online(
             train_X, train_y, 
             FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
-        
     print("DNN with feature selection.")
     train_X, train_y = select_features(train_X, train_y)
     train_dnn_online(
@@ -763,13 +782,15 @@ def run_experiment_11():
 
 
 if __name__ == '__main__':
-    if not FLAGS.notebook:
+    print('Run at time stamp ' + str(time.time()))
+
+    if FLAGS.notebook:
         progress_bar = tqdm_notebook
+
     # run_experiment_5()
     # run_experiment_6()
     # run_experiment_7()
 
-    print('Run at time stamp', time.time())
 
     if FLAGS.run:
         for exp_id in FLAGS.run.split(','):
@@ -780,3 +801,4 @@ if __name__ == '__main__':
         run_experiment_10()
         run_experiment_11()
         # run_experiment_12()
+
