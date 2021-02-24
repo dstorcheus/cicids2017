@@ -198,7 +198,9 @@ def online_data_gen_with_retrain(
         batch_size=256,
         n_batch_to_retrain=1,
         num_steps=1,
-        yield_minibatch=True):
+        yield_minibatch=False,
+        pretrain_epochs=1,
+        train_split=0.7):
     # Algorithm:
     # With each new batch:
     # Train on it for num_steps
@@ -208,8 +210,29 @@ def online_data_gen_with_retrain(
     # train_y = train_y.to_numpy()
 
     n = train_x.shape[0]
-    i = 0
+    m = int(n * train_split)
+    m_range = np.arange(m)
+
+    pretrain_x = train_x[:m, :]
+    pretrain_y = train_y[:m]
+
+    for _ in range(pretrain_epochs):
+
+        if not yield_minibatch:
+            yield pretrain_x, pretrain_y
+            continue
+
+        for _ in range(m // batch_size):
+            # batchsize random numbers in [0 .. i-1]
+            random_idx = np.random.choice(m_range, batch_size)
+            yield pretrain_x[random_idx, :], pretrain_y[random_idx]
+
+    i = m
     while i < n:
+
+        if not yield_minibatch:
+            yield train_x[:i+batch_size, :], train_y[:i+batch_size]
+
         new_batch_x = train_x[i:i+batch_size, :]
         new_batch_y = train_y[i:i+batch_size]
 
@@ -273,7 +296,8 @@ def make_online_tf_dataset(
         train_X_values, train_y, 
         batch_size=256,
         n_batch_to_retrain=1,
-        num_steps=1):
+        num_steps=1,
+        num_pretrain_epochs=10):
     """Returns a tf dataset that give batches in online learning manner."""
 
     def callable_generator():
@@ -282,7 +306,9 @@ def make_online_tf_dataset(
                 train_X_values, train_y,
                 batch_size,
                 n_batch_to_retrain,
-                num_steps):
+                num_steps,
+                yield_minibatch=True,
+                pretrain_epochs=num_pretrain_epochs):
             yield datum
 
     return tf.data.Dataset.from_generator(
@@ -309,7 +335,8 @@ def eval_acc(true_y, pred):
 def train_dnn_online(train_X, train_y,
                      batch_size=256,
                      n_batch_to_retrain=1,
-                     num_steps=1):
+                     num_steps=1,
+                     num_pretrain_epochs=10):
     """Trains DNN model."""
     input_dim_ = len(list(train_X.columns))
     model = Sequential()
@@ -333,10 +360,11 @@ def train_dnn_online(train_X, train_y,
     model.fit(
             make_online_tf_dataset(
                     predict_fn, pred, train_X, train_y,
-                    batch_size, n_batch_to_retrain, num_steps), 
+                    batch_size, n_batch_to_retrain, num_steps,
+                    num_pretrain_epochs=num_pretrain_epochs), 
             epochs=1)
 
-    assert len(pred) == train_y.shape[0]
+    train_y = train_y[-len(pred):]
     acc = eval_acc(train_y, pred)
     auc = eval_auc(train_y, pred)
 
@@ -389,12 +417,12 @@ def train_rf_online(train_X, train_y,
     pred = []
     datagen = online_data_gen_with_retrain(
             predict_fn, pred, train_X, train_y,
-            batch_size, n_batch_to_retrain, num_steps,
-            yield_minibatch=False)
+            batch_size, n_batch_to_retrain, num_steps)
 
     for x, y in progress_bar(datagen, total=total_steps):
         rfe[0] = srfc.partial_fit(x, y, classes=[0, 1])
 
+    train_y = train_y[-len(pred):]
     auc = eval_auc(train_y, pred)
     acc = eval_acc(train_y, pred)
     print("RF AUC: {}".format(auc))
@@ -456,8 +484,7 @@ def train_lgr_online(train_X, train_y, batch_size=256,
     pred = []
     datagen = online_data_gen_with_retrain(
             predict_fn, pred, train_X, train_y,
-            batch_size, n_batch_to_retrain, num_steps,
-            yield_minibatch=False)
+            batch_size, n_batch_to_retrain, num_steps)
 
     for x, y in progress_bar(datagen, total=total_steps):
         LGR_Classifier.partial_fit(x, y, classes=[0, 1])
@@ -499,12 +526,12 @@ def train_bnb_online(train_X, train_y, batch_size=256,
     pred = []
     datagen = online_data_gen_with_retrain(
             predict_fn, pred, train_X, train_y,
-            batch_size, n_batch_to_retrain, num_steps,
-            yield_minibatch=False)
+            batch_size, n_batch_to_retrain, num_steps)
 
     for x, y in progress_bar(datagen, total=total_steps):
         BNB_Classifier.partial_fit(x, y, classes=[0, 1])
 
+    train_y = train_y[-len(pred):]
     auc = eval_auc(train_y, pred)
     acc = eval_acc(train_y, pred)
     print("BNB AUC: {}".format(auc))
@@ -549,12 +576,12 @@ def train_dtc_online(train_X, train_y,
     pred = []
     datagen = online_data_gen_with_retrain(
             predict_fn, pred, train_X, train_y,
-            batch_size, n_batch_to_retrain, num_steps,
-            yield_minibatch=False)
+            batch_size, n_batch_to_retrain, num_steps)
 
     for x, y in progress_bar(datagen, total=total_steps):
         rfe[0] = srfc.partial_fit(x, y, classes=[0, 1])
 
+    train_y = train_y[-len(pred):]
     auc = eval_auc(train_y, pred)
     acc = eval_acc(train_y, pred)
     print("DTC AUC: {}".format(auc))
@@ -703,19 +730,22 @@ def run_experiment_7():
 
 def run_experiment_8():
     """DNN online, with and without feature selection."""
-    print("Train DNN online.")
     df = load_data(FLAGS.sample)
     train_X, train_y = preprocess_data_online(df)
     
     print("DNN without feature selection.")
-    train_dnn_online(
-            train_X, train_y, 
-            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
-    print("DNN with feature selection.")
-    train_X, train_y = select_features(train_X, train_y)
-    train_dnn_online(
-            train_X, train_y, 
-            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
+    for pretrain_epochs in [1, 2, 5, 10, 15, 20]:
+        print("Train DNN online with pretrain_epochs = {}.".format(pretrain_epochs))
+        train_dnn_online(
+                train_X, train_y, 
+                FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps,
+                pretrain_epochs)
+        print("DNN with feature selection.")
+        train_X_selected, train_y_selected = select_features(train_X, train_y)
+        train_dnn_online(
+                train_X_selected, train_y_selected, 
+                FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps,
+                pretrain_epochs)
     
 
 def run_experiment_9():
@@ -797,7 +827,7 @@ if __name__ == '__main__':
             eval('run_experiment_' + exp_id)()
     else:  # manual call
         run_experiment_8()
-        run_experiment_9()
+        # run_experiment_9()
         run_experiment_10()
         run_experiment_11()
         # run_experiment_12()
