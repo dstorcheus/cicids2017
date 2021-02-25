@@ -65,7 +65,7 @@ df_cache = None
 #         f.write(s + '\n')
 
 
-def load_data(sampled_instances=10000):
+def load_data(sampled_instances=100000):
     """Returns sampled cicids data as pd.df."""
 
     global df_cache
@@ -139,10 +139,17 @@ def preprocess_data_online(df):
     return train_X, train_y
 
 
-def preprocess_data(df, test_size_=0.3):
+def preprocess_data(df, test_size_=0.3, split_type='sequential'):
     """Returns train and test data."""
-    # Split dataset on train and test
-    train, test = train_test_split(df, test_size=test_size_, random_state=10)
+    # Split dataset on train and test.
+    if split_type == 'random':
+        train, test = train_test_split(
+            df, test_size=test_size_, random_state=10)
+    if split_type == 'sequential':
+        num_instances = len(df.index)
+        train_length = int((1 - test_size_) * num_instances)
+        train = df[:train_length]
+        test = df[(train_length + 1):]
     train.describe()
     test.describe()
     # Packet Attack Distribution
@@ -179,7 +186,6 @@ def preprocess_data(df, test_size_=0.3):
     import matplotlib.pyplot as plt
     plt.hist(train_y)
     plt.show()
-
     plt.hist(test_y)
     plt.show()
     """
