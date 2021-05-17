@@ -818,7 +818,17 @@ def run_experiment_11():
 
 if __name__ == '__main__':
     print('Run at time stamp ' + str(time.time()))
-
+    """The main file executes experiments.
+    To run experiments, call the necessary function
+    run_experiment_k() for k from 1 to 12.
+    
+    Each experiment trains a specific type of AI model,
+    including DNN, Decision Trees, Naive Bayes, etc.
+    
+    Every experiment has bpth online and offline version of
+    the model evaluation and outouts AUC metric.
+    
+    """
     if FLAGS.notebook:
         progress_bar = tqdm_notebook
 
