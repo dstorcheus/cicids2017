@@ -15,14 +15,10 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
 import sklearn
 import tqdm
-
 from tqdm import tqdm
 from tqdm import tqdm_notebook
-
-#import xgboost as xgb
-
+import xgboost as xgb
 from incremental_trees.models.classification.streaming_rfc import StreamingRFC
-
 import time
 import tensorflow as tf
 import sys
@@ -38,34 +34,24 @@ pd.set_option('display.max_rows', None)
 nRowsRead = None
 
 # Some hardcoded parameters:
-
-
 tf.compat.v1.flags.DEFINE_integer('sample', 10000, '')
 tf.compat.v1.flags.DEFINE_boolean('notebook', False, '')
-tf.compat.v1.flags.DEFINE_integer('num_steps', 1, 'number of training step per new batch in online learning.')
-tf.compat.v1.flags.DEFINE_integer('n_batch_to_retrain', 1, 'number of old batch to retrain in online learning.')
+tf.compat.v1.flags.DEFINE_integer(
+    'num_steps', 1, 'number of training step per new batch in online learning.')
+tf.compat.v1.flags.DEFINE_integer(
+    'n_batch_to_retrain', 1, 'number of old batch to retrain in online learning.')
 tf.compat.v1.flags.DEFINE_integer('batch_size', 256, '')
 tf.compat.v1.flags.DEFINE_string('run', '8,9,10,11', '')
 FLAGS = tf.compat.v1.flags.FLAGS
-
-
 progress_bar = tqdm
-
-
 df_cache = None
 
 
-# A little hack
-# print_sys = print
-
-# def print(s):
-#     print_sys(s)
-#     with open('log.txt', 'a') as f:
-#         f.write(s + '\n')
-
-
 def load_data(sampled_instances=100000):
-    """Returns sampled cicids data as pd.df."""
+    """Returns sampled cicids data as pd.df.
+    Input: loads dataset from local memory.
+    Output: processed dataframe.
+    """
 
     global df_cache
     if df_cache is not None:
@@ -111,6 +97,10 @@ def load_data(sampled_instances=100000):
 
 
 def preprocess_data_online(df):
+    """Data preprocessing pipeline for online evaluation.
+    Input: dataframe with cicids data
+    Output: [training set, testing set]
+    """
     train = df
     train.describe()
     # Packet Attack Distribution
@@ -139,7 +129,13 @@ def preprocess_data_online(df):
 
 
 def preprocess_data(df, test_size_=0.3, split_type='sequential'):
-    """Returns train and test data."""
+    """Returns train and test data.
+    Input:
+     - dataframe with cicids data
+     - ratio of testing set size
+    Output: train_X, train_y, test_X, test_y
+    X stands for features and y for labels (intrusion/benign)
+    """
     # Split dataset on train and test.
     if split_type == 'random':
         train, test = train_test_split(
@@ -180,14 +176,6 @@ def preprocess_data(df, test_size_=0.3, split_type='sequential'):
     train_y = trainDep[:, 0]
     test_X = sc_testdf
     test_y = testDep[:, 0]
-    """
-    print('Train and test histogram')
-    import matplotlib.pyplot as plt
-    plt.hist(train_y)
-    plt.show()
-    plt.hist(test_y)
-    plt.show()
-    """
     # Remove NaN from train and test
     train_X = train_X.replace([np.inf, -np.inf], np.nan)
     test_X = test_X.replace([np.inf, -np.inf], np.nan)
@@ -199,18 +187,19 @@ def preprocess_data(df, test_size_=0.3, split_type='sequential'):
 
 def online_data_gen_with_retrain(
         predict_fn, pred_list,
-        train_x, train_y, 
+        train_x, train_y,
         batch_size=256,
         n_batch_to_retrain=1,
         num_steps=1,
         yield_minibatch=False,
         pretrain_epochs=1,
         train_split=0.7):
-    # Algorithm:
-    # With each new batch:
-    # Train on it for num_steps
-    # Together with n_batch_to_retrain old batches randomly sampled.
-    
+    """ Generates online dtaa using the followin algorithm:
+    Algorithm:
+     - With each new batch:
+     - Train on it for num_steps
+     - Together with n_batch_to_retrain old batches randomly sampled.
+    """
     train_x = train_x.to_numpy()
     # train_y = train_y.to_numpy()
 
@@ -236,15 +225,15 @@ def online_data_gen_with_retrain(
     while i < n:
 
         if not yield_minibatch:
-            yield train_x[:i+batch_size, :], train_y[:i+batch_size]
+            yield train_x[:i + batch_size, :], train_y[:i + batch_size]
 
-        new_batch_x = train_x[i:i+batch_size, :]
-        new_batch_y = train_y[i:i+batch_size]
+        new_batch_x = train_x[i:i + batch_size, :]
+        new_batch_y = train_y[i:i + batch_size]
 
         # Online progressive cross-validation:
         new_pred = predict_fn(new_batch_x)
         pred_list += list(new_pred)
-        
+
         i += batch_size
         if i <= batch_size:
             continue  # will not do any retraining.
@@ -276,7 +265,7 @@ def online_data_gen_with_retrain(
             # Now we shuffle & yield n_batch_to_retrain+1 batches:
             shuffle_idx = np.arange(to_train_x.shape[0])
             np.random.shuffle(shuffle_idx)
-            for j in range(n_batch_to_retrain+1):
+            for j in range(n_batch_to_retrain + 1):
 
                 from_idx = j * batch_size
                 to_idx = from_idx + batch_size
@@ -285,7 +274,7 @@ def online_data_gen_with_retrain(
                 yield (to_train_x[idx_to_yield, :],
                        to_train_y[idx_to_yield])
 
-        # So in total, we have yielded 
+        # So in total, we have yielded
         # (n_batch_to_retrain+1)*num_steps batches
         # for each new batch, in which the new batch
         # of data is yielded num_steps times.
@@ -298,7 +287,7 @@ def make_online_tf_dataset(
         # for progressive evaluation
         # http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.153.3925&rep=rep1&type=pdf
 
-        train_X_values, train_y, 
+        train_X_values, train_y,
         batch_size=256,
         n_batch_to_retrain=1,
         num_steps=1,
@@ -307,7 +296,8 @@ def make_online_tf_dataset(
 
     def callable_generator():
         for datum in online_data_gen_with_retrain(
-                predict_fn, pred_list,  # used for progressive cross-validation.
+                # used for progressive cross-validation.
+                predict_fn, pred_list,
                 train_X_values, train_y,
                 batch_size,
                 n_batch_to_retrain,
@@ -317,10 +307,10 @@ def make_online_tf_dataset(
             yield datum
 
     return tf.data.Dataset.from_generator(
-            callable_generator,
-            output_signature=(
-                tf.TensorSpec(shape=(batch_size, None), dtype=tf.float64),
-                tf.TensorSpec(shape=(batch_size), dtype=tf.int32)))
+        callable_generator,
+        output_signature=(
+            tf.TensorSpec(shape=(batch_size, None), dtype=tf.float64),
+            tf.TensorSpec(shape=(batch_size), dtype=tf.int32)))
 
 
 def eval_auc(true_y, pred):
@@ -333,6 +323,7 @@ def eval_auc(true_y, pred):
 
 
 def eval_acc(true_y, pred):
+    """Evaluate accuracy."""
     pred = (np.array(pred) >= 0.5).astype(np.float64)
     return np.sum(np.equal(true_y, pred)) * 1.0 / len(pred)
 
@@ -342,7 +333,10 @@ def train_dnn_online(train_X, train_y,
                      n_batch_to_retrain=1,
                      num_steps=1,
                      num_pretrain_epochs=10):
-    """Trains DNN model."""
+    """Trains DNN model.
+    Input: model parameters
+    Output: saves model to memory and prints AUC.
+    """
     input_dim_ = len(list(train_X.columns))
     model = Sequential()
     model.add(Dense(12, input_dim=input_dim_, activation='relu'))
@@ -354,7 +348,7 @@ def train_dnn_online(train_X, train_y,
     # fit the keras model on the dataset
 
     total_steps = train_X.shape[0] // batch_size
-    total_steps *= num_steps * (n_batch_to_retrain+1)
+    total_steps *= num_steps * (n_batch_to_retrain + 1)
     print('Total: {} steps'.format(total_steps))
 
     pred = []  # predictions on new batch will be concat here
@@ -363,11 +357,11 @@ def train_dnn_online(train_X, train_y,
         return model.predict(x).flatten()
 
     model.fit(
-            make_online_tf_dataset(
-                    predict_fn, pred, train_X, train_y,
-                    batch_size, n_batch_to_retrain, num_steps,
-                    num_pretrain_epochs=num_pretrain_epochs), 
-            epochs=1)
+        make_online_tf_dataset(
+            predict_fn, pred, train_X, train_y,
+            batch_size, n_batch_to_retrain, num_steps,
+            num_pretrain_epochs=num_pretrain_epochs),
+        epochs=1)
 
     train_y = train_y[-len(pred):]
     acc = eval_acc(train_y, pred)
@@ -378,7 +372,10 @@ def train_dnn_online(train_X, train_y,
 
 
 def train_dnn(train_X, train_y, test_X, test_y):
-    """Trains DNN model."""
+    """Trains DNN model.
+    Input: model parameters
+    Output: saves model to memory and prints AUC.
+    """
     # DNN model without feature selection.
     input_dim_ = len(list(train_X.columns))
     model = Sequential()
@@ -402,17 +399,21 @@ def train_rf_online(train_X, train_y,
                     batch_size=256,
                     n_batch_to_retrain=1,
                     num_steps=1):
-    """Trains rf model."""
+    """Trains rf model.
+    Input: model parameters
+    Output: saves model to memory and prints AUC.
+    """
     srfc = StreamingRFC(
-            n_estimators_per_chunk=20,
-            max_n_estimators=np.inf,
-            n_jobs=4)
+        n_estimators_per_chunk=20,
+        max_n_estimators=np.inf,
+        n_jobs=4)
 
     total_steps = train_X.shape[0] // batch_size
     total_steps *= num_steps
     print('Total {} steps'.format(total_steps))
 
     rfe = [None]
+
     def predict_fn(x):
         if rfe[0] is None:
             return [0.5] * x.shape[0]
@@ -421,8 +422,8 @@ def train_rf_online(train_X, train_y,
 
     pred = []
     datagen = online_data_gen_with_retrain(
-            predict_fn, pred, train_X, train_y,
-            batch_size, n_batch_to_retrain, num_steps)
+        predict_fn, pred, train_X, train_y,
+        batch_size, n_batch_to_retrain, num_steps)
 
     for x, y in progress_bar(datagen, total=total_steps):
         rfe[0] = srfc.partial_fit(x, y, classes=[0, 1])
@@ -435,7 +436,10 @@ def train_rf_online(train_X, train_y,
 
 
 def train_rf(train_X, train_y, test_X, test_y):
-    """Trains rf model."""
+    """Trains rf model.
+    Input: model parameters
+    Output: saves model to memory and prints AUC.
+    """
     rfc = RandomForestClassifier()
     rfe = rfc.fit(train_X, train_y)
     pred = rfe.predict_proba(test_X.values)
@@ -447,7 +451,10 @@ def train_rf(train_X, train_y, test_X, test_y):
 
 
 def train_xgb(train_X, train_y, test_X, test_y):
-    """Trains xgb model."""
+    """Trains xgb model.
+    Input: model parameters
+    Output: saves model to memory and prints AUC.
+    """
     xg = xgb.XGBClassifier(colsample_bytree=0.3, learning_rate=0.1,
                            max_depth=5, alpha=10, n_estimators=10)
     xg = xg.fit(train_X, train_y)
@@ -460,7 +467,10 @@ def train_xgb(train_X, train_y, test_X, test_y):
 
 
 def train_knn(train_X, train_y, test_X, test_y):
-    """Trains xgb model."""
+    """Trains xgb model.
+    Input: model parameters
+    Output: saves model to memory and prints AUC.
+    """
     KNN_Classifier = KNeighborsClassifier(n_jobs=-1)
     KNN_Classifier.fit(train_X, train_y)
     pred = KNN_Classifier.predict_proba(test_X.values)
@@ -471,9 +481,12 @@ def train_knn(train_X, train_y, test_X, test_y):
     print("KNN AUC: {}".format(auc))
 
 
-def train_lgr_online(train_X, train_y, batch_size=256, 
+def train_lgr_online(train_X, train_y, batch_size=256,
                      n_batch_to_retrain=1, num_steps=1):
-    """Trains logistic regression model."""
+    """Trains logistic regression model.
+    Input: model parameters
+    Output: saves model to memory and prints AUC.
+    """
     LGR_Classifier = LogisticRegression(n_jobs=-1, random_state=0)
 
     total_steps = train_X.shape[0] // batch_size
@@ -488,8 +501,8 @@ def train_lgr_online(train_X, train_y, batch_size=256,
 
     pred = []
     datagen = online_data_gen_with_retrain(
-            predict_fn, pred, train_X, train_y,
-            batch_size, n_batch_to_retrain, num_steps)
+        predict_fn, pred, train_X, train_y,
+        batch_size, n_batch_to_retrain, num_steps)
 
     for x, y in progress_bar(datagen, total=total_steps):
         LGR_Classifier.partial_fit(x, y, classes=[0, 1])
@@ -502,7 +515,10 @@ def train_lgr_online(train_X, train_y, batch_size=256,
 
 
 def train_lgr(train_X, train_y, test_X, test_y):
-    """Trains logistic regression model."""
+    """Trains logistic regression model.
+    Input: model parameters
+    Output: saves model to memory and prints AUC.
+    """
     LGR_Classifier = LogisticRegression(n_jobs=-1, random_state=0)
     LGR_Classifier.fit(train_X, train_y)
     pred = LGR_Classifier.predict_proba(test_X.values)
@@ -513,9 +529,12 @@ def train_lgr(train_X, train_y, test_X, test_y):
     print("LGR AUC: {}".format(auc))
 
 
-def train_bnb_online(train_X, train_y, batch_size=256, 
+def train_bnb_online(train_X, train_y, batch_size=256,
                      n_batch_to_retrain=1, num_steps=1):
-    """Trains Bernoully  model."""
+    """Trains Bernoully  model.
+    Input: model parameters
+    Output: saves model to memory and prints AUC.
+    """
     BNB_Classifier = BernoulliNB()
 
     total_steps = train_X.shape[0] // batch_size
@@ -530,8 +549,8 @@ def train_bnb_online(train_X, train_y, batch_size=256,
 
     pred = []
     datagen = online_data_gen_with_retrain(
-            predict_fn, pred, train_X, train_y,
-            batch_size, n_batch_to_retrain, num_steps)
+        predict_fn, pred, train_X, train_y,
+        batch_size, n_batch_to_retrain, num_steps)
 
     for x, y in progress_bar(datagen, total=total_steps):
         BNB_Classifier.partial_fit(x, y, classes=[0, 1])
@@ -544,7 +563,10 @@ def train_bnb_online(train_X, train_y, batch_size=256,
 
 
 def train_bnb(train_X, train_y, test_X, test_y):
-    """Trains Bernoully  model."""
+    """Trains Bernoully  model.
+    Input: model parameters
+    Output: saves model to memory and prints AUC.
+    """
     BNB_Classifier = BernoulliNB()
     BNB_Classifier.fit(train_X, train_y)
     pred = BNB_Classifier.predict_proba(test_X.values)
@@ -558,20 +580,24 @@ def train_bnb(train_X, train_y, test_X, test_y):
 
 
 def train_dtc_online(train_X, train_y,
-                    batch_size=256,
-                    n_batch_to_retrain=1,
-                    num_steps=1):
-    """Trains rf model."""
+                     batch_size=256,
+                     n_batch_to_retrain=1,
+                     num_steps=1):
+    """Trains rf model.
+    Input: model parameters
+    Output: saves model to memory and prints AUC.
+    """
     srfc = StreamingRFC(
-            n_estimators_per_chunk=1,
-            max_features=train_X.shape[1],
-            n_jobs=4)
+        n_estimators_per_chunk=1,
+        max_features=train_X.shape[1],
+        n_jobs=4)
 
     total_steps = train_X.shape[0] // batch_size
     total_steps *= num_steps
     print('Total {} steps'.format(total_steps))
 
     rfe = [None]
+
     def predict_fn(x):
         if rfe[0] is None:
             return [0.5] * x.shape[0]
@@ -580,8 +606,8 @@ def train_dtc_online(train_X, train_y,
 
     pred = []
     datagen = online_data_gen_with_retrain(
-            predict_fn, pred, train_X, train_y,
-            batch_size, n_batch_to_retrain, num_steps)
+        predict_fn, pred, train_X, train_y,
+        batch_size, n_batch_to_retrain, num_steps)
 
     for x, y in progress_bar(datagen, total=total_steps):
         rfe[0] = srfc.partial_fit(x, y, classes=[0, 1])
@@ -594,7 +620,10 @@ def train_dtc_online(train_X, train_y,
 
 
 def train_dtc(train_X, train_y, test_X, test_y):
-    """Trains Decision tree model."""
+    """Trains Decision tree model.
+    Input: model parameters
+    Output: saves model to memory and prints AUC.
+    """
     DTC_Classifier = tree.DecisionTreeClassifier(
         criterion='entropy', random_state=0)
     DTC_Classifier.fit(train_X, train_y)
@@ -606,10 +635,12 @@ def train_dtc(train_X, train_y, test_X, test_y):
     print("DTC AUC: {}".format(auc))
 
 
-
 def select_features(train_X, train_y, test_X=None, test_y=None, k=20):
-    """Selects k features using Random forest."""
- 
+    """Selects k features using Random forest.
+    Input: training and testing dataset
+    Output: sequence of selected features
+    """
+
     selected_feat_fname = 'selected.{}.pkl'.format(k)
     if not os.path.exists(selected_feat_fname):
         # Recursive feature elimination
@@ -641,6 +672,8 @@ def select_features(train_X, train_y, test_X=None, test_y=None, k=20):
 
     return train_X, train_y
 
+# The helper functions below are used to run various experiments.
+# Call them in the main file.
 
 def run_experiment_1():
     """Runs dnn with and without feature selection."""
@@ -737,21 +770,21 @@ def run_experiment_8():
     """DNN online, with and without feature selection."""
     df = load_data(FLAGS.sample)
     train_X, train_y = preprocess_data_online(df)
-    
+
     print("DNN without feature selection.")
     for pretrain_epochs in [1, 2, 5, 10, 15, 20]:
         print("Train DNN online with pretrain_epochs = {}.".format(pretrain_epochs))
         train_dnn_online(
-                train_X, train_y, 
-                FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps,
-                pretrain_epochs)
+            train_X, train_y,
+            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps,
+            pretrain_epochs)
         print("DNN with feature selection.")
         train_X_selected, train_y_selected = select_features(train_X, train_y)
         train_dnn_online(
-                train_X_selected, train_y_selected, 
-                FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps,
-                pretrain_epochs)
-    
+            train_X_selected, train_y_selected,
+            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps,
+            pretrain_epochs)
+
 
 def run_experiment_9():
     """Runs rf with and without feature selection."""
@@ -760,14 +793,14 @@ def run_experiment_9():
     train_X, train_y = preprocess_data_online(df)
     print("RF without feature selection.")
     train_rf_online(
-            train_X, train_y, 
-            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
+        train_X, train_y,
+        FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
     train_X, train_y = select_features(
         train_X, train_y)
     print("RF with feature selection.")
     train_rf_online(
-            train_X, train_y, 
-            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
+        train_X, train_y,
+        FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
 
 
 def run_experiment_10():
@@ -777,13 +810,13 @@ def run_experiment_10():
     train_X, train_y = preprocess_data_online(df)
     print("BNB without feature selection.")
     train_bnb_online(
-            train_X, train_y, 
-            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
+        train_X, train_y,
+        FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
     train_X, train_y = select_features(train_X, train_y)
     print("BNB with feature selection.")
     train_bnb_online(
-            train_X, train_y, 
-            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
+        train_X, train_y,
+        FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
 
 
 def run_experiment_11():
@@ -793,14 +826,14 @@ def run_experiment_11():
     train_X, train_y = preprocess_data_online(df)
     print("DTC without feature selection.")
     train_dtc_online(
-            train_X, train_y, 
-            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
+        train_X, train_y,
+        FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
     train_X, train_y = select_features(
-            train_X, train_y)
+        train_X, train_y)
     print("DTC with feature selection.")
     train_dtc_online(
-            train_X, train_y, 
-            FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
+        train_X, train_y,
+        FLAGS.batch_size, FLAGS.n_batch_to_retrain, FLAGS.num_steps)
 
 
 # def run_experiment_12():
@@ -815,19 +848,18 @@ def run_experiment_11():
 #     train_lgr_online(train_X, train_y)
 
 
-
 if __name__ == '__main__':
     print('Run at time stamp ' + str(time.time()))
     """The main file executes experiments.
     To run experiments, call the necessary function
     run_experiment_k() for k from 1 to 12.
-    
+
     Each experiment trains a specific type of AI model,
     including DNN, Decision Trees, Naive Bayes, etc.
-    
+
     Every experiment has bpth online and offline version of
     the model evaluation and outouts AUC metric.
-    
+
     """
     if FLAGS.notebook:
         progress_bar = tqdm_notebook
@@ -835,7 +867,6 @@ if __name__ == '__main__':
     # run_experiment_5()
     # run_experiment_6()
     # run_experiment_7()
-
 
     if FLAGS.run:
         for exp_id in FLAGS.run.split(','):
@@ -846,4 +877,3 @@ if __name__ == '__main__':
         run_experiment_10()
         run_experiment_11()
         # run_experiment_12()
-
