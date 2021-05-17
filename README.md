@@ -1,5 +1,5 @@
 # cicids2017
-
+To run experiments, install the required libraries and execute run_experiments.py script.
 
 
 # Online learning
