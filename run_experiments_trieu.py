@@ -1,5 +1,4 @@
 """Runs experiments on CICIDS-2017 dataset."""
-#from mpl_toolkits.mplot3d import Axes3D
 import itertools
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import RFE
